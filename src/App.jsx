@@ -1,63 +1,22 @@
 import React, { useState } from 'react';
 import FileUpload from './components/FileUpload';
-import ProcessingResult from './components/ProcessingResult';
 import api, { formatErrorMessage } from './services/api';
 
+const names = { teachers: 'Teachers', schools: 'Schools', enrollment: 'Enrollment', locations: 'Locations' };
+const label = (entity) => names[entity] || entity;
+
 export default function App() {
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
-  const [result, setResult] = useState(null);
-
-  const handleProcess = async (file) => {
-    setIsProcessing(true);
-    setErrorMessage('');
-
-    try {
-      const processedData = await api.processDatasetWorkflow(file);
-      setResult(processedData);
-    } catch (err) {
-      setErrorMessage(formatErrorMessage(err));
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleReset = () => {
-    setResult(null);
-    setErrorMessage('');
-  };
-
-  return (
-    <div className="page-wrapper">
-      <main className="container">
-        <div className="card">
-          {/* Header */}
-          <header className="card-header">
-            <h1 className="page-title">Teacher Data Cleaning &amp; Standardization</h1>
-            <p className="page-description">
-              Upload a teacher dataset in CSV or Excel format. The system will validate,
-              clean, standardize and return the processed dataset.
-            </p>
-          </header>
-
-          {/* Body: Upload Form or Processing Result */}
-          <div className="card-body">
-            {!result ? (
-              <FileUpload
-                onProcess={handleProcess}
-                isProcessing={isProcessing}
-                errorMessage={errorMessage}
-                onClearError={() => setErrorMessage('')}
-              />
-            ) : (
-              <ProcessingResult
-                result={result}
-                onReset={handleReset}
-              />
-            )}
-          </div>
-        </div>
-      </main>
-    </div>
-  );
+  const [files, setFiles] = useState([]), [inspection, setInspection] = useState(null), [overrides, setOverrides] = useState({});
+  const [result, setResult] = useState(null), [quality, setQuality] = useState(null), [issues, setIssues] = useState([]), [audit, setAudit] = useState([]);
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [filter, setFilter] = useState('ALL');
+  const inspect = async (chosen) => { setBusy(true); setError(''); try { setInspection(await api.inspectFiles(chosen)); setFiles(chosen); } catch (err) { setError(formatErrorMessage(err)); } finally { setBusy(false); } };
+  const process = async () => { setBusy(true); setError(''); try { const upload = await api.processMultiFiles(files, overrides); const [report, validation, transformations] = await Promise.all([api.getQualityReport(upload.dataset_id), api.getValidationIssues(upload.dataset_id), api.getStandardizationChanges(upload.dataset_id)]); setResult(upload); setQuality(report); setIssues(validation); setAudit(transformations.logs || []); } catch (err) { setError(formatErrorMessage(err)); } finally { setBusy(false); } };
+  const reset = () => { setInspection(null); setResult(null); setQuality(null); setIssues([]); setAudit([]); setError(''); };
+  const visibleIssues = issues.filter((issue) => filter === 'ALL' || issue.severity === filter);
+  return <div className="page-wrapper"><main className="container"><div className="card"><header className="card-header"><span className="system-badge">ShikshaSetu · L1–L2</span><h1 className="page-title">Education data cleaning</h1><p className="page-description">Upload → inspect → clean → review → download. Source columns are preserved.</p></header><div className="card-body">
+    {!inspection && <FileUpload onInspect={inspect} isProcessing={busy} errorMessage={error} onClearError={() => setError('')} />}
+    {inspection && !result && <><div className="steps-nav"><span className="step-item completed">1 Upload</span><span className="step-item active">2 Detect & map</span><span className="step-item">3 Clean & review</span></div><h2 className="page-title">Entity detection and schema mapping</h2><div className="table-wrapper"><table className="data-table"><thead><tr><th>File / sheet</th><th>Entity</th><th>Confidence</th><th>Mappings</th></tr></thead><tbody>{inspection.sources.map((source) => <tr key={source.source_key}><td>{source.source_key}</td><td>{source.detected_entity === 'unknown' ? <select value={overrides[source.source_key] || ''} onChange={(event) => setOverrides({ ...overrides, [source.source_key]: event.target.value })}><option value="">Choose entity</option>{Object.keys(names).map((entity) => <option key={entity} value={entity}>{label(entity)}</option>)}</select> : <span className="badge badge-entity">{label(source.detected_entity)}</span>}</td><td>{Math.round(source.confidence * 100)}%</td><td><small>{source.mappings.filter((item) => item.is_mapped).map((item) => `${item.raw_column} → ${item.canonical_column}`).join(', ')}{source.unmapped_columns.length ? ` · Unmapped (preserved): ${source.unmapped_columns.join(', ')}` : ''}</small></td></tr>)}</tbody></table></div>{error && <div className="error-banner">{error}</div>}<div className="form-action"><button className="btn-primary" disabled={busy || inspection.sources.some((source) => source.detected_entity === 'unknown' && !overrides[source.source_key])} onClick={process}>{busy ? 'Cleaning & standardizing…' : 'Clean & standardize data'}</button><button className="btn-secondary" onClick={reset}>Start over</button></div></>}
+    {result && quality && <><div className="success-banner">Data cleaned successfully.</div><h2 className="page-title">Quality summary</h2><div className="metrics-grid"><Metric label="Records processed" value={result.total_rows}/><Metric label="Valid records" value={quality.valid_rows_count}/><Metric label="Warnings" value={quality.issue_counts_by_severity.WARNING || 0}/><Metric label="Errors" value={quality.issue_counts_by_severity.ERROR || 0}/><Metric label="Duplicates" value={quality.duplicate_rows_count}/><Metric label="Quality score" value={`${quality.scores.overall_score} / 100`}/></div><div className="clean-datasets-box"><div className="clean-datasets-header"><strong>Cleaned data</strong><button className="btn-success btn-sm" onClick={() => api.downloadCompleteExcel(result.dataset_id)}>Download complete Excel</button></div>{result.available_entities.map((entity) => <div className="clean-entity-row" key={entity}><span><strong>{label(entity)}</strong> · {result.entity_counts?.[entity]?.clean || 0} clean records · {quality.entity_scores?.[entity]?.overall_score ?? '—'} score</span><button className="btn-secondary btn-sm" onClick={() => api.downloadEntityDataset(result.dataset_id, entity)}>Download CSV</button></div>)}</div><section className="accordion"><div className="accordion-content"><strong>Validation issues</strong><div className="filter-bar">{['ALL','ERROR','WARNING'].map((value) => <button key={value} className={`filter-btn ${filter === value ? 'active' : ''}`} onClick={() => setFilter(value)}>{value === 'ALL' ? 'All' : `${value[0]}${value.slice(1).toLowerCase()}s`}</button>)}</div><div className="table-wrapper"><table className="data-table"><thead><tr><th>Entity</th><th>Row</th><th>Field</th><th>Issue</th><th>Severity</th><th>Value</th></tr></thead><tbody>{visibleIssues.slice(0, 100).map((issue, index) => <tr key={index}><td>{label(issue.entity)}</td><td>{issue.row_number}</td><td>{issue.column}</td><td>{issue.message}</td><td><span className={`badge badge-${issue.severity.toLowerCase()}`}>{issue.severity}</span></td><td>{String(issue.original_value ?? '')}</td></tr>)}</tbody></table></div></div></section><details className="accordion"><summary className="accordion-trigger">View standardization changes ({audit.length})</summary><div className="accordion-content">{audit.slice(0, 100).map((entry, index) => <p key={index}>{label(entry.entity)} · {entry.column}: {entry.original_value} → {entry.standard_value} ({entry.rule})</p>)}</div></details><button className="btn-secondary" onClick={reset}>Process another dataset</button></>}
+  </div></div></main></div>;
 }
+function Metric({ label, value }) { return <div className="metric-card"><div className="metric-card-label">{label}</div><div className="metric-card-value">{value ?? '—'}</div></div>; }

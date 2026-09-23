@@ -1,7 +1,6 @@
 import axios from 'axios';
 
 // Base API configuration
-// Uses VITE_API_BASE_URL if specified in .env, otherwise defaults to relative '/api' proxied by Vite
 const rawBase = import.meta.env.VITE_API_BASE_URL || '';
 let resolvedBaseUrl = '/api';
 
@@ -14,7 +13,7 @@ export const API_BASE_URL = resolvedBaseUrl;
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 60000,
+  timeout: 120000,
 });
 
 /**
@@ -23,12 +22,11 @@ const apiClient = axios.create({
 export const formatErrorMessage = (err) => {
   if (!err) return 'An unexpected error occurred.';
 
-  // Network error or backend offline
   if (!err.response) {
     if (err.code === 'ECONNABORTED') {
       return 'The request timed out. Please try again.';
     }
-    return 'Backend server is unavailable.';
+    return 'Backend server is unavailable. Please verify that the backend is running.';
   }
 
   const { status, data } = err.response;
@@ -47,7 +45,7 @@ export const formatErrorMessage = (err) => {
   }
 
   if (status >= 500) {
-    return 'File processing failed. Please try again.';
+    return 'Dataset processing failed. Please verify file formatting and try again.';
   }
 
   return data?.detail || 'An error occurred while processing the request.';
@@ -55,26 +53,68 @@ export const formatErrorMessage = (err) => {
 
 export const api = {
   /**
-   * Upload and process dataset
-   * Uses existing backend endpoint: POST /api/upload
-   * Field name: 'file' (multipart/form-data)
+   * Step 2 & 3: Inspect uploaded file(s) or sheets for entity detection and schema mapping.
+   * Endpoint: POST /api/upload/inspect
+   */
+  inspectFiles: async (files) => {
+    const formData = new FormData();
+    files.forEach((file) => {
+      formData.append('files', file);
+    });
+
+    const response = await apiClient.post('/upload/inspect', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
+  /**
+   * Step 4: Process multiple files or multi-sheet Excel with optional entity overrides.
+   * Endpoint: POST /api/upload/multi
+   */
+  processMultiFiles: async (files, entityOverrides = {}) => {
+    const formData = new FormData();
+    files.forEach((file) => {
+      formData.append('files', file);
+    });
+
+    if (entityOverrides && Object.keys(entityOverrides).length > 0) {
+      formData.append('entity_overrides', JSON.stringify(entityOverrides));
+    }
+
+    const response = await apiClient.post('/upload/multi', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
+  /**
+   * Upload single file (backward compatible).
+   * Endpoint: POST /api/upload
    */
   uploadFile: async (file, onUploadProgress) => {
     const formData = new FormData();
     formData.append('file', file);
 
     const response = await apiClient.post('/upload', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
+      headers: { 'Content-Type': 'multipart/form-data' },
       onUploadProgress,
     });
     return response.data;
   },
 
   /**
-   * Fetch dataset metadata
-   * Uses existing backend endpoint: GET /api/datasets/{dataset_id}
+   * Load demo dataset.
+   * Endpoint: POST /api/upload/demo
+   */
+  loadDemoDataset: async () => {
+    const response = await apiClient.post('/upload/demo');
+    return response.data;
+  },
+
+  /**
+   * Fetch dataset metadata.
+   * Endpoint: GET /api/datasets/{dataset_id}
    */
   getDatasetMetadata: async (datasetId) => {
     const response = await apiClient.get(`/datasets/${datasetId}`);
@@ -82,8 +122,8 @@ export const api = {
   },
 
   /**
-   * Fetch dataset quality analysis report
-   * Uses existing backend endpoint: GET /api/quality/{dataset_id}
+   * Fetch dataset quality analysis report.
+   * Endpoint: GET /api/quality/{dataset_id}
    */
   getQualityReport: async (datasetId) => {
     const response = await apiClient.get(`/quality/${datasetId}`);
@@ -91,33 +131,40 @@ export const api = {
   },
 
   /**
-   * Get direct URL for clean dataset download
-   * Uses existing backend endpoint: GET /api/datasets/{dataset_id}/download
+   * Fetch validation issues with filters.
+   * Endpoint: GET /api/quality/{dataset_id}/issues
    */
-  getCleanDownloadUrl: (datasetId) => {
-    return `${API_BASE_URL}/datasets/${datasetId}/download`;
+  getValidationIssues: async (datasetId, { entity, severity, column } = {}) => {
+    const params = {};
+    if (entity) params.entity = entity;
+    if (severity && severity !== 'ALL') params.severity = severity;
+    if (column) params.column = column;
+
+    const response = await apiClient.get(`/quality/${datasetId}/issues`, { params });
+    return response.data;
   },
 
   /**
-   * Download clean CSV dataset as a file download in browser
-   * Uses existing backend endpoint: GET /api/datasets/{dataset_id}/download
+   * Fetch standardization changes / audit log.
+   * Endpoint: GET /api/quality/{dataset_id}/standardization
    */
-  downloadCleanDataset: async (datasetId, filename = 'cleaned_teachers_dataset.csv') => {
+  getStandardizationChanges: async (datasetId, entity = null) => {
+    const params = entity ? { entity } : {};
+    const response = await apiClient.get(`/quality/${datasetId}/standardization`, { params });
+    return response.data;
+  },
+
+  /**
+   * Download clean entity CSV.
+   * Endpoint: GET /api/datasets/{dataset_id}/download?entity={entity}
+   */
+  downloadEntityDataset: async (datasetId, entity, filename) => {
     try {
       const response = await apiClient.get(`/datasets/${datasetId}/download`, {
+        params: { entity },
         responseType: 'blob',
       });
-
-      // Extract filename from Content-Disposition header if available
-      let downloadFilename = filename;
-      const disposition = response.headers['content-disposition'];
-      if (disposition && disposition.indexOf('filename=') !== -1) {
-        const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition);
-        if (matches != null && matches[1]) {
-          downloadFilename = matches[1].replace(/['"]/g, '');
-        }
-      }
-
+      const downloadFilename = filename || `cleaned_${entity}.csv`;
       const blobUrl = window.URL.createObjectURL(new Blob([response.data], { type: 'text/csv' }));
       const tempLink = document.createElement('a');
       tempLink.href = blobUrl;
@@ -132,51 +179,54 @@ export const api = {
   },
 
   /**
-   * Complete high-level workflow:
-   * 1. Upload & trigger processing pipeline
-   * 2. Retrieve metadata & quality score
-   * 3. Return consolidated result metrics
+   * Download complete multi-sheet Excel workbook.
+   * Endpoint: GET /api/datasets/{dataset_id}/download-excel
    */
-  processDatasetWorkflow: async (file, onProgress) => {
-    // 1. Upload file
-    const uploadRes = await api.uploadFile(file, onProgress);
+  downloadCompleteExcel: async (datasetId, filename = 'cleaned_dataset.xlsx') => {
+    try {
+      const response = await apiClient.get(`/datasets/${datasetId}/download-excel`, {
+        responseType: 'blob',
+      });
+      const blobUrl = window.URL.createObjectURL(
+        new Blob([response.data], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        })
+      );
+      const tempLink = document.createElement('a');
+      tempLink.href = blobUrl;
+      tempLink.setAttribute('download', filename);
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      tempLink.remove();
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      throw new Error(formatErrorMessage(err));
+    }
+  },
+
+  /**
+   * Backward-compatible high level workflow helper for single file.
+   */
+  processDatasetWorkflow: async (file) => {
+    const uploadRes = await api.uploadFile(file);
     const datasetId = uploadRes.dataset_id;
 
-    // 2. Fetch dataset metadata and quality report in parallel
-    let totalRowsClean = uploadRes.total_rows;
-    let duplicatesRemoved = 0;
-    let qualityScore = uploadRes.overall_quality_score;
-
+    let qualityReport = null;
     try {
-      const [metadataRes, qualityRes] = await Promise.allSettled([
-        api.getDatasetMetadata(datasetId),
-        api.getQualityReport(datasetId),
-      ]);
-
-      if (metadataRes.status === 'fulfilled' && metadataRes.value) {
-        totalRowsClean = metadataRes.value.total_rows_clean ?? totalRowsClean;
-        if (metadataRes.value.overall_quality_score !== undefined) {
-          qualityScore = metadataRes.value.overall_quality_score;
-        }
-      }
-
-      if (qualityRes.status === 'fulfilled' && qualityRes.value) {
-        duplicatesRemoved = qualityRes.value.duplicate_rows_count ?? 0;
-      } else if (metadataRes.status === 'fulfilled' && metadataRes.value) {
-        duplicatesRemoved = Math.max(0, (metadataRes.value.total_rows_raw || 0) - (metadataRes.value.total_rows_clean || 0));
-      }
+      qualityReport = await api.getQualityReport(datasetId);
     } catch (e) {
-      // Fallback to upload response data
+      // ignore
     }
 
     return {
-      datasetId: uploadRes.dataset_id,
+      datasetId,
       filename: uploadRes.filename,
       originalRecords: uploadRes.total_rows,
-      cleanRecords: totalRowsClean,
-      duplicatesRemoved,
-      qualityScore,
+      cleanRecords: qualityReport?.total_clean_rows ?? uploadRes.total_rows,
+      duplicatesRemoved: qualityReport?.duplicate_rows_count ?? 0,
+      qualityScore: uploadRes.overall_quality_score,
       createdAt: uploadRes.created_at,
+      availableEntities: uploadRes.available_entities || ['teachers'],
     };
   },
 };
