@@ -252,6 +252,23 @@ export default function App() {
                     </div>
                   ))}
                 </div>
+                <section className="l3-action-box">
+                  <div>
+                    <strong>Layer 3 deterministic analysis</strong>
+                    <p className="page-description">
+                      Analyze the cleaned teachers, schools, and enrollment
+                      data.
+                    </p>
+                  </div>
+                  <button
+                    className="btn-primary"
+                    disabled={busy || !result.dataset_id}
+                    onClick={runL3Analysis}
+                  >
+                    {busy ? "Running L3 analysis..." : "Run L3 analysis"}
+                  </button>
+                </section>
+                {l3 && <L3Results analysis={l3} />}
                 <section className="accordion">
                   <div className="accordion-content">
                     <strong>Validation issues</strong>
@@ -332,6 +349,149 @@ function Metric({ label, value }) {
     <div className="metric-card">
       <div className="metric-card-label">{label}</div>
       <div className="metric-card-value">{value ?? "—"}</div>
+    </div>
+  );
+}
+
+function L3Results({ analysis }) {
+  const summary = analysis.summary || {};
+  const ptrRows = analysis.ptr_analysis?.schools || [];
+  const qualificationRows = analysis.qualification_analysis?.records || [];
+  const qualificationIssues = qualificationRows.filter(
+    (row) => row.qualification_match !== "MATCH",
+  );
+  const qualificationMismatchCount = qualificationRows.filter(
+    (row) => row.qualification_match === "MISMATCH",
+  ).length;
+  const qualificationPartialCount = qualificationRows.filter(
+    (row) => row.qualification_match === "PARTIAL_MATCH",
+  ).length;
+  const qualificationUnknownCount = qualificationRows.filter(
+    (row) => row.qualification_match === "UNKNOWN",
+  ).length;
+  const geographicRows = analysis.geographic_analysis?.flags || [];
+
+  return (
+    <section className="l3-results">
+      <h2 className="page-title">L3 analysis results</h2>
+      <div className="metrics-grid">
+        <Metric label="Schools analyzed" value={summary.schools_analyzed} />
+        <Metric
+          label="Schools with shortage"
+          value={summary.schools_with_shortage}
+        />
+        <Metric
+          label="Schools with surplus"
+          value={summary.schools_with_surplus}
+        />
+        <Metric
+          label="Qualification mismatches"
+          value={qualificationMismatchCount}
+        />
+        <Metric label="Partial matches" value={qualificationPartialCount} />
+        <Metric
+          label="Unknown qualifications"
+          value={qualificationUnknownCount}
+        />
+        <Metric label="Geographic flags" value={summary.geographic_flags} />
+      </div>
+
+      <h3 className="section-title">School staffing / PTR</h3>
+      <DataTable
+        columns={[
+          "School",
+          "District",
+          "Students",
+          "Teachers",
+          "PTR",
+          "Expected",
+          "Shortage",
+          "Surplus",
+          "Status",
+        ]}
+        rows={ptrRows.map((row) => [
+          `${row.school_code} · ${row.school_name}`,
+          row.district,
+          row.total_students,
+          row.total_teachers,
+          row.ptr ?? "—",
+          row.expected_teachers,
+          row.shortage,
+          row.surplus,
+          row.status,
+        ])}
+      />
+
+      <h3 className="section-title">Qualification issues</h3>
+      <DataTable
+        columns={[
+          "Teacher",
+          "School",
+          "Subject",
+          "Qualification",
+          "Status",
+          "Reason",
+        ]}
+        rows={qualificationIssues.map((row) => [
+          `${row.Teacher_ID} · ${row.Teacher_Name}`,
+          row.School_Code,
+          row.Subject,
+          row.Qualification,
+          row.qualification_match,
+          row.reason,
+        ])}
+      />
+
+      <h3 className="section-title">Geographic imbalance</h3>
+      <DataTable
+        columns={[
+          "Shortage school",
+          "Surplus school",
+          "Distance",
+          "Signal",
+          "Reason",
+        ]}
+        rows={geographicRows.map((row) => [
+          row.shortage_school_code,
+          row.surplus_school_code,
+          row.distance_km == null
+            ? "District-level only"
+            : `${row.distance_km} km`,
+          row.potential_issue,
+          row.reason,
+        ])}
+      />
+    </section>
+  );
+}
+
+function DataTable({ columns, rows }) {
+  return (
+    <div className="table-wrapper">
+      <table className="data-table">
+        <thead>
+          <tr>
+            {columns.map((column) => (
+              <th key={column}>{column}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length ? (
+            rows.map((row, rowIndex) => (
+              <tr key={rowIndex}>
+                {row.map((cell, cellIndex) => (
+                  <td key={cellIndex}>{cell ?? "—"}</td>
+                ))}
+              </tr>
+            ))
+          ) : (
+            <tr>
+              <td colSpan={columns.length}>No records available.</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }
