@@ -151,6 +151,29 @@ export const api = {
   },
 
   /**
+   * Fetch explainable Layer 4 predictive analysis.
+   * Endpoint: GET /api/quality/{dataset_id}/l4
+   */
+  getL4Analysis: async (datasetId) => {
+    const response = await apiClient.get(`/quality/${datasetId}/l4`);
+    return response.data;
+  },
+
+  /**
+   * Generate advisory Layer 5 staffing scenarios.
+   * Endpoint: POST /api/quality/{dataset_id}/l5
+   */
+  generateL5Scenarios: async (datasetId, options = {}) => {
+    const response = await apiClient.post(`/quality/${datasetId}/l5`, {
+      scenario_count: options.scenarioCount || 3,
+      time_limit_seconds: options.timeLimitSeconds || 10,
+      constraint_registry_version: options.constraintRegistryVersion || "unconfigured",
+      constraints: options.constraints || [],
+    });
+    return response.data;
+  },
+
+  /**
    * Fetch validation issues with filters.
    * Endpoint: GET /api/quality/{dataset_id}/issues
    */

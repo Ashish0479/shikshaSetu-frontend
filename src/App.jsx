@@ -18,7 +18,9 @@ export default function App() {
     [quality, setQuality] = useState(null),
     [issues, setIssues] = useState([]),
     [audit, setAudit] = useState([]),
-    [l3, setL3] = useState(null);
+    [l3, setL3] = useState(null),
+    [l4, setL4] = useState(null),
+    [l5, setL5] = useState(null);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [filter, setFilter] = useState("ALL");
@@ -49,6 +51,8 @@ export default function App() {
       setIssues(validation);
       setAudit(transformations.logs || []);
       setL3(null);
+      setL4(null);
+      setL5(null);
     } catch (err) {
       setError(formatErrorMessage(err));
     } finally {
@@ -68,6 +72,31 @@ export default function App() {
       setBusy(false);
     }
   };
+  const runL4Analysis = async () => {
+    if (!result?.dataset_id) return;
+    setBusy(true);
+    setError("");
+    try {
+      const analysis = await api.getL4Analysis(result.dataset_id);
+      setL4(analysis);
+    } catch (err) {
+      setError(formatErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const runL5Scenarios = async () => {
+    if (!result?.dataset_id) return;
+    setBusy(true);
+    setError("");
+    try {
+      setL5(await api.generateL5Scenarios(result.dataset_id));
+    } catch (err) {
+      setError(formatErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
   const reset = () => {
     setInspection(null);
     setResult(null);
@@ -75,6 +104,8 @@ export default function App() {
     setIssues([]);
     setAudit([]);
     setL3(null);
+    setL4(null);
+    setL5(null);
     setError("");
   };
   const visibleIssues = issues.filter(
@@ -268,7 +299,40 @@ export default function App() {
                     {busy ? "Running L3 analysis..." : "Run L3 analysis"}
                   </button>
                 </section>
+                <section className="l3-action-box">
+                  <div>
+                    <strong>Layer 4 predictive analysis</strong>
+                    <p className="page-description">
+                      Retirement outlook, staffing risk, and school clustering.
+                    </p>
+                  </div>
+                  <button
+                    className="btn-primary"
+                    disabled={busy || !result.dataset_id}
+                    onClick={runL4Analysis}
+                  >
+                    {busy ? "Running L4 analysis..." : "Run L4 analysis"}
+                  </button>
+                </section>
+                <section className="l3-action-box">
+                  <div>
+                    <strong>Layer 5 advisory staffing scenarios</strong>
+                    <p className="page-description">
+                      Generate explainable CP-SAT scenarios for officer review.
+                      No transfer or posting is executed.
+                    </p>
+                  </div>
+                  <button
+                    className="btn-primary"
+                    disabled={busy || !result.dataset_id}
+                    onClick={runL5Scenarios}
+                  >
+                    {busy ? "Generating scenarios..." : "Generate L5 scenarios"}
+                  </button>
+                </section>
                 {l3 && <L3Results analysis={l3} />}
+                {l4 && <L4Results analysis={l4} />}
+                {l5 && <L5Results result={l5} />}
                 <section className="accordion">
                   <div className="accordion-content">
                     <strong>Validation issues</strong>
@@ -350,6 +414,63 @@ function Metric({ label, value }) {
       <div className="metric-card-label">{label}</div>
       <div className="metric-card-value">{value ?? "—"}</div>
     </div>
+  );
+}
+
+function L5Results({ result }) {
+  return (
+    <section className="l3-results">
+      <h2 className="page-title">L5 advisory scenarios</h2>
+      <p className="page-description">
+        Solver status: <strong>{result.status}</strong> · Registry:{" "}
+        {result.constraint_registry_version}
+      </p>
+      {result.scenarios?.length ? (
+        <div className="table-wrapper">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Scenario</th>
+                <th>Movements</th>
+                <th>Remaining shortages</th>
+                <th>New shortages</th>
+                <th>Distance (km)</th>
+                <th>Solver</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.scenarios.map((scenario) => (
+                <tr key={scenario.scenario_id}>
+                  <td>{scenario.scenario_id}</td>
+                  <td>{scenario.metrics.movement_count}</td>
+                  <td>
+                    {Object.values(scenario.metrics.remaining_shortages).reduce(
+                      (total, value) => total + value,
+                      0,
+                    )}
+                  </td>
+                  <td>{scenario.metrics.newly_created_shortages}</td>
+                  <td>{scenario.metrics.total_distance_km}</td>
+                  <td>{scenario.solver_status}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="page-description">
+          No feasible advisory scenario was generated. Review the solver
+          status, constraints, exclusions, and data limitations above.
+        </p>
+      )}
+      {result.limitations?.length > 0 && (
+        <div className="error-banner">
+          {result.limitations.map((item) => (
+            <div key={item}>{item}</div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -461,6 +582,79 @@ function L3Results({ analysis }) {
           row.reason,
         ])}
       />
+    </section>
+  );
+}
+
+function L4Results({ analysis }) {
+  const retirementRows = analysis.retirement_outlook?.yearly_counts || [];
+  const riskRows = analysis.future_staffing_risk?.schools || [];
+  const clusterRows = analysis.school_clusters?.clusters || [];
+  const clusterSummary = analysis.school_clusters?.cluster_summary || [];
+  const forecast = analysis.forecast || {};
+
+  return (
+    <section className="l3-results">
+      <h2 className="page-title">L4 predictive analysis</h2>
+      <div className="metrics-grid">
+        <Metric label="Retirement age" value={`${analysis.metadata?.retirement_age ?? "—"} years`} />
+        <Metric label="Target PTR" value={analysis.metadata?.target_ptr ?? "—"} />
+        <Metric label="Risk schools" value={riskRows.length} />
+        <Metric label="Clusters" value={clusterRows.length || "—"} />
+      </div>
+
+      <h3 className="section-title">Retirement outlook</h3>
+      <DataTable
+        columns={["Year", "Teachers reaching retirement age"]}
+        rows={retirementRows.map((row) => [row.year, row.teachers_reaching_retirement_age])}
+      />
+
+      <h3 className="section-title">Future staffing risk</h3>
+      <DataTable
+        columns={["School", "District", "Shortage", "Retirements", "PTR", "Risk Score", "Risk Category"]}
+        rows={riskRows.map((row) => [
+          `${row.School_Code} · ${row.School_Name}`,
+          row.District,
+          row.Current_Shortage,
+          row.Retiring_Within_5_Years,
+          row.PTR,
+          row.Risk_Score,
+          row.Risk_Category,
+        ])}
+      />
+
+      <h3 className="section-title">School clusters</h3>
+      {analysis.school_clusters?.available ? (
+        <>
+          <DataTable
+            columns={["Cluster", "Schools", "Average Students", "Average Teachers", "Average PTR", "Average Shortage", "Average Risk"]}
+            rows={clusterSummary.map((row) => [
+              row.Cluster_ID,
+              row.Number_of_Schools,
+              row.Average_Students,
+              row.Average_Teachers,
+              row.Average_PTR,
+              row.Average_Shortage,
+              row.Average_Risk_Score,
+            ])}
+          />
+          <p className="page-description">
+            {analysis.school_clusters?.cluster_explanations?.[0] || "Cluster profile summary available."}
+          </p>
+        </>
+      ) : (
+        <p className="page-description">{analysis.school_clusters?.message || "Insufficient school records for reliable clustering."}</p>
+      )}
+
+      <h3 className="section-title">Forecast validation</h3>
+      {forecast.available ? (
+        <DataTable
+          columns={["Model", "Status", "MAPE"]}
+          rows={forecast.models.map((model) => [model.model, model.status, model.mape ?? "Not yet evaluated"])}
+        />
+      ) : (
+        <p className="page-description">{forecast.message || "Historical time-series data insufficient for Prophet/ARIMA backtesting."}</p>
+      )}
     </section>
   );
 }
