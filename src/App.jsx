@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import FileUpload from "./components/FileUpload";
+import Copilot from "./components/Copilot";
 import api, { formatErrorMessage } from "./services/api";
 
 const names = {
@@ -23,7 +24,8 @@ export default function App() {
     [l5, setL5] = useState(null);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [filter, setFilter] = useState("ALL");
+    [filter, setFilter] = useState("ALL"),
+    [activeLayer, setActiveLayer] = useState("pipeline");
   const inspect = async (chosen) => {
     setBusy(true);
     setError("");
@@ -111,6 +113,26 @@ export default function App() {
   const visibleIssues = issues.filter(
     (issue) => filter === "ALL" || issue.severity === filter,
   );
+
+  const layerNavigation = (
+    <nav className="layer-navigation" aria-label="Application layers">
+      <button
+        className={`layer-nav-item ${activeLayer === "pipeline" ? "active" : ""}`}
+        onClick={() => setActiveLayer("pipeline")}
+        type="button"
+      >
+        L1–L5 Data Pipeline
+      </button>
+      <button
+        className={`layer-nav-item ${activeLayer === "copilot" ? "active" : ""}`}
+        onClick={() => setActiveLayer("copilot")}
+        type="button"
+      >
+        L6 — AI Copilot
+      </button>
+    </nav>
+  );
+
   return (
     <div className="page-wrapper">
       <main className="container">
@@ -122,284 +144,307 @@ export default function App() {
               Upload → inspect → clean → review → download. Source columns are
               preserved.
             </p>
+            {layerNavigation}
           </header>
           <div className="card-body">
-            {!inspection && (
-              <FileUpload
-                onInspect={inspect}
-                isProcessing={busy}
-                errorMessage={error}
-                onClearError={() => setError("")}
-              />
-            )}
-            {inspection && !result && (
+            {activeLayer === "copilot" ? (
+              <Copilot datasetId={result?.dataset_id} />
+            ) : (
               <>
-                <div className="steps-nav">
-                  <span className="step-item completed">1 Upload</span>
-                  <span className="step-item active">2 Detect & map</span>
-                  <span className="step-item">3 Clean & review</span>
-                </div>
-                <h2 className="page-title">
-                  Entity detection and schema mapping
-                </h2>
-                <div className="table-wrapper">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>File / sheet</th>
-                        <th>Entity</th>
-                        <th>Confidence</th>
-                        <th>Mappings</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {inspection.sources.map((source) => (
-                        <tr key={source.source_key}>
-                          <td>{source.source_key}</td>
-                          <td>
-                            {source.detected_entity === "unknown" ? (
-                              <select
-                                value={overrides[source.source_key] || ""}
-                                onChange={(event) =>
-                                  setOverrides({
-                                    ...overrides,
-                                    [source.source_key]: event.target.value,
-                                  })
-                                }
-                              >
-                                <option value="">Choose entity</option>
-                                {Object.keys(names).map((entity) => (
-                                  <option key={entity} value={entity}>
-                                    {label(entity)}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <span className="badge badge-entity">
-                                {label(source.detected_entity)}
-                              </span>
-                            )}
-                          </td>
-                          <td>{Math.round(source.confidence * 100)}%</td>
-                          <td>
-                            <small>
-                              {source.mappings
-                                .filter((item) => item.is_mapped)
-                                .map(
-                                  (item) =>
-                                    `${item.raw_column} → ${item.canonical_column}`,
-                                )
-                                .join(", ")}
-                              {source.unmapped_columns.length
-                                ? ` · Unmapped (preserved): ${source.unmapped_columns.join(", ")}`
-                                : ""}
-                            </small>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {error && <div className="error-banner">{error}</div>}
-                <div className="form-action">
-                  <button
-                    className="btn-primary"
-                    disabled={
-                      busy ||
-                      inspection.sources.some(
-                        (source) =>
-                          source.detected_entity === "unknown" &&
-                          !overrides[source.source_key],
-                      )
-                    }
-                    onClick={process}
-                  >
-                    {busy
-                      ? "Cleaning & standardizing…"
-                      : "Clean & standardize data"}
-                  </button>
-                  <button className="btn-secondary" onClick={reset}>
-                    Start over
-                  </button>
-                </div>
-              </>
-            )}
-            {result && quality && (
-              <>
-                <div className="success-banner">Data cleaned successfully.</div>
-                <h2 className="page-title">Quality summary</h2>
-                <div className="metrics-grid">
-                  <Metric label="Records processed" value={result.total_rows} />
-                  <Metric
-                    label="Valid records"
-                    value={quality.valid_rows_count}
+                {!inspection && (
+                  <FileUpload
+                    onInspect={inspect}
+                    isProcessing={busy}
+                    errorMessage={error}
+                    onClearError={() => setError("")}
                   />
-                  <Metric
-                    label="Warnings"
-                    value={quality.issue_counts_by_severity.WARNING || 0}
-                  />
-                  <Metric
-                    label="Errors"
-                    value={quality.issue_counts_by_severity.ERROR || 0}
-                  />
-                  <Metric
-                    label="Duplicates"
-                    value={quality.duplicate_rows_count}
-                  />
-                  <Metric
-                    label="Quality score"
-                    value={`${quality.scores.overall_score} / 100`}
-                  />
-                </div>
-                <div className="clean-datasets-box">
-                  <div className="clean-datasets-header">
-                    <strong>Cleaned data</strong>
-                    <button
-                      className="btn-success btn-sm"
-                      onClick={() =>
-                        api.downloadCompleteExcel(result.dataset_id)
-                      }
-                    >
-                      Download complete Excel
-                    </button>
-                  </div>
-                  {result.available_entities.map((entity) => (
-                    <div className="clean-entity-row" key={entity}>
-                      <span>
-                        <strong>{label(entity)}</strong> ·{" "}
-                        {result.entity_counts?.[entity]?.clean || 0} clean
-                        records ·{" "}
-                        {quality.entity_scores?.[entity]?.overall_score ?? "—"}{" "}
-                        score
-                      </span>
-                      <button
-                        className="btn-secondary btn-sm"
-                        onClick={() =>
-                          api.downloadEntityDataset(result.dataset_id, entity)
-                        }
-                      >
-                        Download CSV
-                      </button>
+                )}
+                {inspection && !result && (
+                  <>
+                    <div className="steps-nav">
+                      <span className="step-item completed">1 Upload</span>
+                      <span className="step-item active">2 Detect & map</span>
+                      <span className="step-item">3 Clean & review</span>
                     </div>
-                  ))}
-                </div>
-                <section className="l3-action-box">
-                  <div>
-                    <strong>Layer 3 deterministic analysis</strong>
-                    <p className="page-description">
-                      Analyze the cleaned teachers, schools, and enrollment
-                      data.
-                    </p>
-                  </div>
-                  <button
-                    className="btn-primary"
-                    disabled={busy || !result.dataset_id}
-                    onClick={runL3Analysis}
-                  >
-                    {busy ? "Running L3 analysis..." : "Run L3 analysis"}
-                  </button>
-                </section>
-                <section className="l3-action-box">
-                  <div>
-                    <strong>Layer 4 predictive analysis</strong>
-                    <p className="page-description">
-                      Retirement outlook, staffing risk, and school clustering.
-                    </p>
-                  </div>
-                  <button
-                    className="btn-primary"
-                    disabled={busy || !result.dataset_id}
-                    onClick={runL4Analysis}
-                  >
-                    {busy ? "Running L4 analysis..." : "Run L4 analysis"}
-                  </button>
-                </section>
-                <section className="l3-action-box">
-                  <div>
-                    <strong>Layer 5 advisory staffing scenarios</strong>
-                    <p className="page-description">
-                      Generate explainable CP-SAT scenarios for officer review.
-                      No transfer or posting is executed.
-                    </p>
-                  </div>
-                  <button
-                    className="btn-primary"
-                    disabled={busy || !result.dataset_id}
-                    onClick={runL5Scenarios}
-                  >
-                    {busy ? "Generating scenarios..." : "Generate L5 scenarios"}
-                  </button>
-                </section>
-                {l3 && <L3Results analysis={l3} />}
-                {l4 && <L4Results analysis={l4} />}
-                {l5 && <L5Results result={l5} />}
-                <section className="accordion">
-                  <div className="accordion-content">
-                    <strong>Validation issues</strong>
-                    <div className="filter-bar">
-                      {["ALL", "ERROR", "WARNING"].map((value) => (
-                        <button
-                          key={value}
-                          className={`filter-btn ${filter === value ? "active" : ""}`}
-                          onClick={() => setFilter(value)}
-                        >
-                          {value === "ALL"
-                            ? "All"
-                            : `${value[0]}${value.slice(1).toLowerCase()}s`}
-                        </button>
-                      ))}
-                    </div>
+                    <h2 className="page-title">
+                      Entity detection and schema mapping
+                    </h2>
                     <div className="table-wrapper">
                       <table className="data-table">
                         <thead>
                           <tr>
+                            <th>File / sheet</th>
                             <th>Entity</th>
-                            <th>Row</th>
-                            <th>Field</th>
-                            <th>Issue</th>
-                            <th>Severity</th>
-                            <th>Value</th>
+                            <th>Confidence</th>
+                            <th>Mappings</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {visibleIssues.slice(0, 100).map((issue, index) => (
-                            <tr key={index}>
-                              <td>{label(issue.entity)}</td>
-                              <td>{issue.row_number}</td>
-                              <td>{issue.column}</td>
-                              <td>{issue.message}</td>
+                          {inspection.sources.map((source) => (
+                            <tr key={source.source_key}>
+                              <td>{source.source_key}</td>
                               <td>
-                                <span
-                                  className={`badge badge-${issue.severity.toLowerCase()}`}
-                                >
-                                  {issue.severity}
-                                </span>
+                                {source.detected_entity === "unknown" ? (
+                                  <select
+                                    value={overrides[source.source_key] || ""}
+                                    onChange={(event) =>
+                                      setOverrides({
+                                        ...overrides,
+                                        [source.source_key]: event.target.value,
+                                      })
+                                    }
+                                  >
+                                    <option value="">Choose entity</option>
+                                    {Object.keys(names).map((entity) => (
+                                      <option key={entity} value={entity}>
+                                        {label(entity)}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <span className="badge badge-entity">
+                                    {label(source.detected_entity)}
+                                  </span>
+                                )}
                               </td>
-                              <td>{String(issue.original_value ?? "")}</td>
+                              <td>{Math.round(source.confidence * 100)}%</td>
+                              <td>
+                                <small>
+                                  {source.mappings
+                                    .filter((item) => item.is_mapped)
+                                    .map(
+                                      (item) =>
+                                        `${item.raw_column} → ${item.canonical_column}`,
+                                    )
+                                    .join(", ")}
+                                  {source.unmapped_columns.length
+                                    ? ` · Unmapped (preserved): ${source.unmapped_columns.join(", ")}`
+                                    : ""}
+                                </small>
+                              </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
-                  </div>
-                </section>
-                <details className="accordion">
-                  <summary className="accordion-trigger">
-                    View standardization changes ({audit.length})
-                  </summary>
-                  <div className="accordion-content">
-                    {audit.slice(0, 100).map((entry, index) => (
-                      <p key={index}>
-                        {label(entry.entity)} · {entry.column}:{" "}
-                        {entry.original_value} → {entry.standard_value} (
-                        {entry.rule})
-                      </p>
-                    ))}
-                  </div>
-                </details>
-                <button className="btn-secondary" onClick={reset}>
-                  Process another dataset
-                </button>
+                    {error && <div className="error-banner">{error}</div>}
+                    <div className="form-action">
+                      <button
+                        className="btn-primary"
+                        disabled={
+                          busy ||
+                          inspection.sources.some(
+                            (source) =>
+                              source.detected_entity === "unknown" &&
+                              !overrides[source.source_key],
+                          )
+                        }
+                        onClick={process}
+                      >
+                        {busy
+                          ? "Cleaning & standardizing…"
+                          : "Clean & standardize data"}
+                      </button>
+                      <button className="btn-secondary" onClick={reset}>
+                        Start over
+                      </button>
+                    </div>
+                  </>
+                )}
+                {result && quality && (
+                  <>
+                    <div className="success-banner">
+                      Data cleaned successfully.
+                    </div>
+                    <h2 className="page-title">Quality summary</h2>
+                    <div className="metrics-grid">
+                      <Metric
+                        label="Records processed"
+                        value={result.total_rows}
+                      />
+                      <Metric
+                        label="Valid records"
+                        value={quality.valid_rows_count}
+                      />
+                      <Metric
+                        label="Warnings"
+                        value={quality.issue_counts_by_severity.WARNING || 0}
+                      />
+                      <Metric
+                        label="Errors"
+                        value={quality.issue_counts_by_severity.ERROR || 0}
+                      />
+                      <Metric
+                        label="Duplicates"
+                        value={quality.duplicate_rows_count}
+                      />
+                      <Metric
+                        label="Quality score"
+                        value={`${quality.scores.overall_score} / 100`}
+                      />
+                    </div>
+                    <div className="clean-datasets-box">
+                      <div className="clean-datasets-header">
+                        <strong>Cleaned data</strong>
+                        <button
+                          className="btn-success btn-sm"
+                          onClick={() =>
+                            api.downloadCompleteExcel(result.dataset_id)
+                          }
+                        >
+                          Download complete Excel
+                        </button>
+                      </div>
+                      {result.available_entities.map((entity) => (
+                        <div className="clean-entity-row" key={entity}>
+                          <span>
+                            <strong>{label(entity)}</strong> ·{" "}
+                            {result.entity_counts?.[entity]?.clean || 0} clean
+                            records ·{" "}
+                            {quality.entity_scores?.[entity]?.overall_score ??
+                              "—"}{" "}
+                            score
+                          </span>
+                          <button
+                            className="btn-secondary btn-sm"
+                            onClick={() =>
+                              api.downloadEntityDataset(
+                                result.dataset_id,
+                                entity,
+                              )
+                            }
+                          >
+                            Download CSV
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <section className="l3-action-box">
+                      <div>
+                        <strong>Layer 3 deterministic analysis</strong>
+                        <p className="page-description">
+                          Analyze the cleaned teachers, schools, and enrollment
+                          data.
+                        </p>
+                      </div>
+                      <button
+                        className="btn-primary"
+                        disabled={busy || !result.dataset_id}
+                        onClick={runL3Analysis}
+                      >
+                        {busy ? "Running L3 analysis..." : "Run L3 analysis"}
+                      </button>
+                    </section>
+                    <section className="l3-action-box">
+                      <div>
+                        <strong>Layer 4 predictive analysis</strong>
+                        <p className="page-description">
+                          Retirement outlook, staffing risk, and school
+                          clustering.
+                        </p>
+                      </div>
+                      <button
+                        className="btn-primary"
+                        disabled={busy || !result.dataset_id}
+                        onClick={runL4Analysis}
+                      >
+                        {busy ? "Running L4 analysis..." : "Run L4 analysis"}
+                      </button>
+                    </section>
+                    <section className="l3-action-box">
+                      <div>
+                        <strong>Layer 5 advisory staffing scenarios</strong>
+                        <p className="page-description">
+                          Generate explainable CP-SAT scenarios for officer
+                          review. No transfer or posting is executed.
+                        </p>
+                      </div>
+                      <button
+                        className="btn-primary"
+                        disabled={busy || !result.dataset_id}
+                        onClick={runL5Scenarios}
+                      >
+                        {busy
+                          ? "Generating scenarios..."
+                          : "Generate L5 scenarios"}
+                      </button>
+                    </section>
+                    {l3 && <L3Results analysis={l3} />}
+                    {l4 && <L4Results analysis={l4} />}
+                    {l5 && <L5Results result={l5} />}
+                    <section className="accordion">
+                      <div className="accordion-content">
+                        <strong>Validation issues</strong>
+                        <div className="filter-bar">
+                          {["ALL", "ERROR", "WARNING"].map((value) => (
+                            <button
+                              key={value}
+                              className={`filter-btn ${filter === value ? "active" : ""}`}
+                              onClick={() => setFilter(value)}
+                            >
+                              {value === "ALL"
+                                ? "All"
+                                : `${value[0]}${value.slice(1).toLowerCase()}s`}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="table-wrapper">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Entity</th>
+                                <th>Row</th>
+                                <th>Field</th>
+                                <th>Issue</th>
+                                <th>Severity</th>
+                                <th>Value</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {visibleIssues
+                                .slice(0, 100)
+                                .map((issue, index) => (
+                                  <tr key={index}>
+                                    <td>{label(issue.entity)}</td>
+                                    <td>{issue.row_number}</td>
+                                    <td>{issue.column}</td>
+                                    <td>{issue.message}</td>
+                                    <td>
+                                      <span
+                                        className={`badge badge-${issue.severity.toLowerCase()}`}
+                                      >
+                                        {issue.severity}
+                                      </span>
+                                    </td>
+                                    <td>
+                                      {String(issue.original_value ?? "")}
+                                    </td>
+                                  </tr>
+                                ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </section>
+                    <details className="accordion">
+                      <summary className="accordion-trigger">
+                        View standardization changes ({audit.length})
+                      </summary>
+                      <div className="accordion-content">
+                        {audit.slice(0, 100).map((entry, index) => (
+                          <p key={index}>
+                            {label(entry.entity)} · {entry.column}:{" "}
+                            {entry.original_value} → {entry.standard_value} (
+                            {entry.rule})
+                          </p>
+                        ))}
+                      </div>
+                    </details>
+                    <button className="btn-secondary" onClick={reset}>
+                      Process another dataset
+                    </button>
+                  </>
+                )}
               </>
             )}
           </div>
@@ -459,8 +504,8 @@ function L5Results({ result }) {
         </div>
       ) : (
         <p className="page-description">
-          No feasible advisory scenario was generated. Review the solver
-          status, constraints, exclusions, and data limitations above.
+          No feasible advisory scenario was generated. Review the solver status,
+          constraints, exclusions, and data limitations above.
         </p>
       )}
       {result.limitations?.length > 0 && (
@@ -597,8 +642,14 @@ function L4Results({ analysis }) {
     <section className="l3-results">
       <h2 className="page-title">L4 predictive analysis</h2>
       <div className="metrics-grid">
-        <Metric label="Retirement age" value={`${analysis.metadata?.retirement_age ?? "—"} years`} />
-        <Metric label="Target PTR" value={analysis.metadata?.target_ptr ?? "—"} />
+        <Metric
+          label="Retirement age"
+          value={`${analysis.metadata?.retirement_age ?? "—"} years`}
+        />
+        <Metric
+          label="Target PTR"
+          value={analysis.metadata?.target_ptr ?? "—"}
+        />
         <Metric label="Risk schools" value={riskRows.length} />
         <Metric label="Clusters" value={clusterRows.length || "—"} />
       </div>
@@ -606,12 +657,23 @@ function L4Results({ analysis }) {
       <h3 className="section-title">Retirement outlook</h3>
       <DataTable
         columns={["Year", "Teachers reaching retirement age"]}
-        rows={retirementRows.map((row) => [row.year, row.teachers_reaching_retirement_age])}
+        rows={retirementRows.map((row) => [
+          row.year,
+          row.teachers_reaching_retirement_age,
+        ])}
       />
 
       <h3 className="section-title">Future staffing risk</h3>
       <DataTable
-        columns={["School", "District", "Shortage", "Retirements", "PTR", "Risk Score", "Risk Category"]}
+        columns={[
+          "School",
+          "District",
+          "Shortage",
+          "Retirements",
+          "PTR",
+          "Risk Score",
+          "Risk Category",
+        ]}
         rows={riskRows.map((row) => [
           `${row.School_Code} · ${row.School_Name}`,
           row.District,
@@ -627,7 +689,15 @@ function L4Results({ analysis }) {
       {analysis.school_clusters?.available ? (
         <>
           <DataTable
-            columns={["Cluster", "Schools", "Average Students", "Average Teachers", "Average PTR", "Average Shortage", "Average Risk"]}
+            columns={[
+              "Cluster",
+              "Schools",
+              "Average Students",
+              "Average Teachers",
+              "Average PTR",
+              "Average Shortage",
+              "Average Risk",
+            ]}
             rows={clusterSummary.map((row) => [
               row.Cluster_ID,
               row.Number_of_Schools,
@@ -639,21 +709,32 @@ function L4Results({ analysis }) {
             ])}
           />
           <p className="page-description">
-            {analysis.school_clusters?.cluster_explanations?.[0] || "Cluster profile summary available."}
+            {analysis.school_clusters?.cluster_explanations?.[0] ||
+              "Cluster profile summary available."}
           </p>
         </>
       ) : (
-        <p className="page-description">{analysis.school_clusters?.message || "Insufficient school records for reliable clustering."}</p>
+        <p className="page-description">
+          {analysis.school_clusters?.message ||
+            "Insufficient school records for reliable clustering."}
+        </p>
       )}
 
       <h3 className="section-title">Forecast validation</h3>
       {forecast.available ? (
         <DataTable
           columns={["Model", "Status", "MAPE"]}
-          rows={forecast.models.map((model) => [model.model, model.status, model.mape ?? "Not yet evaluated"])}
+          rows={forecast.models.map((model) => [
+            model.model,
+            model.status,
+            model.mape ?? "Not yet evaluated",
+          ])}
         />
       ) : (
-        <p className="page-description">{forecast.message || "Historical time-series data insufficient for Prophet/ARIMA backtesting."}</p>
+        <p className="page-description">
+          {forecast.message ||
+            "Historical time-series data insufficient for Prophet/ARIMA backtesting."}
+        </p>
       )}
     </section>
   );

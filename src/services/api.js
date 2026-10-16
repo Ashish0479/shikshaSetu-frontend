@@ -167,8 +167,22 @@ export const api = {
     const response = await apiClient.post(`/quality/${datasetId}/l5`, {
       scenario_count: options.scenarioCount || 3,
       time_limit_seconds: options.timeLimitSeconds || 10,
-      constraint_registry_version: options.constraintRegistryVersion || "unconfigured",
+      constraint_registry_version:
+        options.constraintRegistryVersion || "unconfigured",
       constraints: options.constraints || [],
+    });
+    return response.data;
+  },
+
+  /**
+   * Ask the Layer 6 evidence-grounded copilot.
+   * Endpoint: POST /api/l6/ask
+   */
+  askCopilot: async (question, datasetId = null, scenarioId = null) => {
+    const response = await apiClient.post("/l6/ask", {
+      question,
+      dataset_id: datasetId,
+      scenario_id: scenarioId,
     });
     return response.data;
   },
